@@ -1,0 +1,134 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <style>
+    html, body {
+      padding:0px;
+      margin:0px;
+    }
+
+    table {
+      position:fixed;
+      top:0px;
+      left:0px;
+      width:100%;
+      border-left:1px solid #000000;
+      border-top:1px solid #000000;
+      border-spacing: 0;
+      border-collapse: collapse;
+    }
+
+    td, th {
+      border-right:1px solid #000000;
+      border-bottom:1px solid #000000;
+      padding:4px 10px 4px 10px;
+      min-width:50px;
+    }
+
+    td:first-child, th:first-child {
+      min-width:30px;
+    }
+
+    th {
+      padding:4px 20px 4px 10px;
+      text-align:left;
+      font-weight:bold;
+    }
+
+  </style>
+</head>
+<body class="fsi-output">
+  <div id="wrapper" class="font-family text-color">
+    <table class="inset-panel-border-color inset-panel-background-color">
+      <thead class="tool-panel-background-color text-color-highlight">
+        <tr id="head"><th>#</th><th>&nbsp;</th></tr>
+      </thead>
+      <tbody id="body">
+        <tr><th>&nbsp;</th><td>&nbsp;</td></tr>
+      </tbody>
+    </table>
+    &nbsp;
+  </div>
+  <script src="scripts/jquery-2.2.3.min.js"></script>
+  <script>
+
+  jQuery.prototype.setBorders = function() {
+    return this.addClass("inset-panel-border-color");
+  };
+
+  function createRows(rowCount, columns) {
+    var head = $("#head").empty();
+    $("<th />").setBorders().html("#").appendTo(head);
+    for(var i = 0; i < columns.length; i++) {
+      $("<th />").setBorders().html(columns[i]).appendTo(head);
+    }
+
+    var rows = [];
+    var body = $("#body").empty();
+    for(var i = 0; i < rowCount; i++) {
+      var row = { columns: [] };
+      var tr = $("<tr />").appendTo(body);
+      if (i%2==0) tr.addClass("tool-panel-background-color-fade50");
+
+      var th = $("<th />").setBorders().html("&nbsp;").appendTo(tr);
+      for(var j = 0; j < columns.length; j++) {
+        row.columns.push($("<td />").setBorders().html("&nbsp;").appendTo(tr));
+      }
+      row.key = th;
+      row.tr = tr;
+      rows.push(row);
+    }
+    return rows;
+  }
+
+
+  function initialize(meta)
+  {
+    // Default maximum height. We could adapt this based on $(window).height()
+    // but then ionide cannot create small frame and resize it to make it bigger
+    // later when it receives a message from us, which is an ugly effect.
+    var viewHeight = 500;
+    var rowHeight = $("tbody tr").height();
+    var totalRows = meta.rows;
+    var viewCount = Math.ceil(viewHeight / rowHeight - 1);
+
+    var qidx = window.location.href.indexOf('?');
+    if (qidx > -1) {
+      var id = window.location.href.substr(qidx + 1);
+      window.parent.postMessage("height " + id + " " + (rowHeight * (totalRows+1)),"*");
+    }
+    $("#wrapper").css("min-height", rowHeight * (totalRows+1) + "px");
+    var rows = createRows(viewCount, meta.columns);
+
+    function update(offset) {
+      console.log(offset + ", " + viewCount);
+      $.ajax({url:"rows/" + offset + "?count=" + viewCount}).done(function(res) {
+        var data = JSON.parse(res);
+        for(var i = 0; i < viewCount; i++) {
+          var point = data[i];
+          if (point == null) {
+            rows[i].tr.hide();
+          } else {
+            rows[i].tr.show();
+            rows[i].key.html(point.key);
+            for(var j = 0; j < rows[i].columns.length; j++)
+              rows[i].columns[j].html(point.columns[j]);
+          }
+        }
+      });
+    }
+
+    $(window).on("scroll", function() {
+      var offset = Math.ceil($(window).scrollTop() / rowHeight);
+      update(offset);
+    });
+    update(0);
+  }
+
+  $.ajax({url:"metadata"}).done(function(res) {
+    initialize(JSON.parse(res));
+  });
+
+</script>
+</body>
+</html>
