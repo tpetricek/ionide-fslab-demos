@@ -40,9 +40,31 @@ frame [ "CZ" => czschool; "EU" => euschool ]
 
 
 
+type Html = { Html : string }
+//fsi.AddHtmlPrinter(fun (h:Html) -> h.Html)
+let html s = { Html = s }
 
 
+type Table = Table of string[,]
 
+let table =
+  [ [ "Test"; "More"]
+    [ "1234"; "5678"] ]
+  |> array2D |> Table
+
+
+#if HAS_FSI_ADDHTMLPRINTER
+fsi.AddHtmlPrinter(fun (Table t) ->
+  [ yield "<table>"
+    for i in 0 .. t.GetLength(0)-1 do
+      yield "<tr>"
+      for j in 0 .. t.GetLength(1)-1 do
+        yield "<td>" + t.[i,j] + "</td>"
+      yield "</tr>"
+    yield "</table>" ] |> String.concat "")
+#endif
+
+table
 
 
 
@@ -157,17 +179,10 @@ let formatVector (config:FormatConfig) (formatValue: 'T -> string) (vector: Vect
         |> String.concat " & "
       "\\end{bmatrix}" ]
 
-let inline formatMathValue (floatFormat:string) = function
-  | PositiveInfinity -> "\\infty"
-  | NegativeInfinity -> "-\\infty"
-  | NaN -> "\\times"
-  | Float v -> v.ToString(floatFormat)
-  | Float32 v -> v.ToString(floatFormat)
-  | v -> v.ToString()
 
 
 type Html = { Html : string }
-fsi.AddHtmlPrinter(fun (h:Html) -> h.Html)
+//fsi.AddHtmlPrinter(fun (h:Html) -> h.Html)
 let html s = { Html = s }
 
 open Suave
@@ -209,11 +224,12 @@ let host math =
     style="border:none;width:100%;height:500px;" />""", url)
 
 
+(*
 fsi.AddHtmlPrinter(fun (m:Matrix<float>) ->
   m
   |> formatMatrix (FormatConfig.Create()) (formatMathValue "G4")
   |> host)
-
+//*)
 
 matrix [ for j in 0.0 .. 10.0 ->[for i in 0.0 .. 10.0 -> sin i*j] ]
 

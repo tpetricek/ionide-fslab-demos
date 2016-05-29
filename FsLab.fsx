@@ -1,4 +1,5 @@
 #nowarn "211"
+#I "."
 #I "packages/Deedle/lib/net40"
 #I "packages/Deedle.1.2.4/lib/net40"
 #I "packages/Deedle.RPlugin/lib/net40"
@@ -118,6 +119,7 @@ module Server =
 
 module DeedleHtmlFormatters =
   open Suave
+  open Suave.Operators
   open Deedle
   open Deedle.Internal
   open FSharp.Data
@@ -144,13 +146,42 @@ module DeedleHtmlFormatters =
     let pid = System.Diagnostics.Process.GetCurrentProcess().Id
     fun () -> incr counter; sprintf "fslab-grid-%d-%d" pid counter.Value
 
+#if HAS_FSI_ADDHTMLPRINTER
+  let standaloneHtmlOutput = fsi.HtmlPrinterParameters.["html-standalone-output"] :?> bool
+#else
+  let standaloneHtmlOutput = true  
+#endif
+  open System.Text.RegularExpressions
+  let extractTag tag inclusive html = Regex.Match(html, "<" + tag + "[^>]*>(.*)</" + tag + ">", RegexOptions.Singleline).Groups.[if inclusive then 0 else 1].Value
+  let gridHtml = System.IO.File.ReadAllText(__SOURCE_DIRECTORY__ + "/frame.html")
+  let gridScript = extractTag "script" true gridHtml
+  let gridStyle = extractTag "style" true gridHtml
+  let gridCustomScript id height serviceUrl = 
+    sprintf "<script type=\"text/javascript\">
+        $(function () { setupGrid(\"%s\", %d, \"%s\"); });
+      </script>" id height serviceUrl
+
+  let gridBody id = "<div class=\"grid\" id=\"" + id + """">
+    <table>
+      <thead>
+        <tr class="head"><th>#</th><th>&nbsp;</th></tr>
+      </thead>
+      <tbody class="body">
+        <tr><th>&nbsp;</th><td>&nbsp;</td></tr>
+      </tbody>
+    </table>
+    <div class="scroller">
+      <div class="spacer"></div>
+    </div>
+  </div>
+  """
+
   let registerGrid colKeys rowCount getRow =
     let metadata = GridJson.Metadata(colKeys, rowCount).ToString()
     let app =
+      Writers.setHeader  "Access-Control-Allow-Origin" "*" >=> 
+      Writers.setHeader "Access-Control-Allow-Headers" "content-type" >=> 
       choose [
-        Filters.pathScan "/%d/grid" (fun _ ->
-            System.IO.File.ReadAllText(__SOURCE_DIRECTORY__ + "/frame.html")
-            |> Successful.OK )
         Filters.pathScan "/%d/metadata" (fun _ ->
             Successful.OK (metadata) )
         Filters.pathScan "/%d/rows/%d" (fun (_, row) -> request (fun r ->
@@ -172,8 +203,24 @@ module DeedleHtmlFormatters =
             Files.browseHome ctx)
       ]
     let url = server.Value.AddPart(app)
-    System.String.Format("""<iframe src="{0}/grid?{1}"
-      style="border:none;width:100%;height:100px;" id='{1}' />""", url, nextGridId())
+    let id = nextGridId()
+    seq [ "style", gridStyle; 
+          "script", gridScript
+          "script", gridCustomScript id 500 url ], gridBody id
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   type ISeriesOperation<'R> =
     abstract Invoke<'K, 'V when 'K : equality> : Series<'K, 'V> -> 'R
@@ -191,7 +238,7 @@ module DeedleHtmlFormatters =
   let registerFormattable (obj:IFsiFormattable) =
     match obj with
     | Series tys ->
-      { new ISeriesOperation<string> with
+      { new ISeriesOperation<_> with
           member x.Invoke(s) =
             let colKeys = [| "Value" |]
             let rowCount = s.KeyCount
@@ -201,7 +248,7 @@ module DeedleHtmlFormatters =
             registerGrid colKeys rowCount getRow }
       |> invokeSeriesOperation tys obj
     | :? IFrame as f ->
-      { new IFrameOperation<string> with
+      { new IFrameOperation<_> with
           member x.Invoke(df) =
             let colKeys = df.ColumnKeys |> Seq.map (box >> string) |> Array.ofSeq
             let rowCount = df.RowCount
@@ -212,7 +259,7 @@ module DeedleHtmlFormatters =
                 |> Array.ofSeq
             registerGrid colKeys rowCount getRow }
       |> f.Apply
-    | _ -> "(Error: Deedle object implements IFsiFormattable, but it's not a frame or series)"
+    | _ -> Seq.empty, "(Error: Deedle object implements IFsiFormattable, but it's not a frame or series)"
 
 // --------------------------------------------------------------------------------------
 
@@ -228,22 +275,50 @@ module FsiAutoShow =
     synexpr.Print())
 
 #if HAS_FSI_ADDHTMLPRINTER
+#else
+  module FsInteractiveService = 
+    let mutable htmlPrinters = []
+    let tryFormatHtml o = htmlPrinters |> Seq.tryPick (fun f -> f o)
+    let htmlPrinterParams = System.Collections.Generic.Dictionary<string, obj>()
+    do htmlPrinterParams.["html-standalone-output"] <- true
+
+  type Microsoft.FSharp.Compiler.Interactive.InteractiveSession with
+    member x.HtmlPrinterParameters = FsInteractiveService.htmlPrinterParams
+    member x.AddHtmlPrinter<'T>(f:'T -> seq<string * string> * string) = 
+      FsInteractiveService.htmlPrinters <- (fun (value:obj) ->
+        match value with
+        | :? 'T as value -> Some(f value)
+        | _ -> None) :: FsInteractiveService.htmlPrinters
+#endif
+
+//#if HAS_FSI_ADDHTMLPRINTER
+  let standaloneHtmlOutput = fsi.HtmlPrinterParameters.["html-standalone-output"] :?> bool
+
   fsi.AddHtmlPrinter(fun (obj:Deedle.Internal.IFsiFormattable) ->
     DeedleHtmlFormatters.registerFormattable obj)
 
   let createIFrame height body =
     let url = server.Value.AddPage(body)
     System.String.Format("""<iframe src="{0}"
-      style="border:none;width:100%;height:{1}px;" />""", url, height)
+      style="border:none;width:100%;height:{1}px;"></iframe>""", url, height)
+
+
+
+  let googleJsapi = """<script type="text/javascript" src="https://www.google.com/jsapi"></script>"""
+  let googleLoad = """<script type="text/javascript">
+      google.load("visualization", "1.1", 
+        { packages: ["corechart", "annotationchart", "calendar", 
+            "gauge", "geochart", "map", "sankey", "table", "timeline", "treemap"] })
+    </script>"""
 
   fsi.AddPrinter(fun (chart:XPlot.GoogleCharts.GoogleChart) ->
     "(Google Chart)")
   fsi.AddHtmlPrinter(fun (chart:XPlot.GoogleCharts.GoogleChart) ->
     let ch = chart |> XPlot.GoogleCharts.Chart.WithSize (800, 600)
-    ch.Html |> createIFrame 600)
+    seq [ "script", googleJsapi; "script", googleLoad ], ch.InlineHtml)
 
 
-#else
+//#else
   fsi.AddPrinter(fun (printer:Deedle.Internal.IFsiFormattable) ->
     "\n" + (printer.Format()))
 
@@ -265,7 +340,7 @@ module FsiAutoShow =
     </head>
     <body>""" + chart.GetInlineHtml() + "</body></html>" |> displayHtml
     "(Plotly Chart)" )
-#endif
+//#endif
 #endif
 
 namespace FSharp.Charting
